@@ -3,61 +3,49 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 
-// ---------CREDENTIIALS-------- //
-#define ssid "ls"
-#define wifiPass ""
-#define mqttServer "mqtt.eclipse.org"
-#define mqttUsername "KangLanis"
-#define mqttPassword "LanisJayaSelamanya"
-#define mqttPort 1883
+#include <creds.h>
 
-// -----------PIN-------------- //
-#define sensor_pin_flow_1 D1
-#define sensor_pin_flow_2 D2
-#define sensor_pin_rain_1 A0
+#define flowPin_1 D2
+#define flowPin_2 D3
+#define rainPin_1 A0
 
-// ---------- TOPIC ------------//
-#define mqttTopic "smartvilages/river/endpointUjung"
+#define BAUDRATE 115200
 
-// ---------- DEVICE ID --------//
-#define deviceID "7b5d6a80-13ff-11eb-9168-92374923234"
-#define deviceType "ESP8266"
-
-// FlowSensors Structure
 struct FlowSensors
 {
-    float calibrationFactor{4.5};
-    volatile float flowRate{0};
-    volatile uint32_t pulse{0};
-    volatile uint32_t mililiters{0};
-    unsigned long totalMilliLitres{0};
-    unsigned long prevTime{0};
-
-    
+    float calFactor{4.5};
+    volatile float fRate;
+    volatile uint32_t pulse;
+    volatile uint32_t mLiters;
+    unsigned long mLitersTotal;
+    unsigned long preTime;
 };
 
-// rainSensor reading parameters
-uint32 sensorReading{0};
-uint16 sensorReadRange{0};
+struct RainSensor
+{
+    uint32 sensorReading;
+    uint16 sensorReadRange;
+};
 
 const int jsonCapacity = 313; // Calculated for esp8266 // AVR = 217
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 StaticJsonDocument<jsonCapacity> rawData;
+
+JsonObject sensObj = rawData.to<JsonObject>();
+JsonArray fSensArr = sensObj.createNestedArray("flowSensors");
+JsonArray rSensArr = sensObj.createNestedArray("rainSensors");
+JsonObject fSensDat_1 = fSensArr.createNestedObject();
+JsonObject fSensDat_2 = fSensArr.createNestedObject();
+JsonObject rSensDat_1 = rSensArr.createNestedObject();
+
 FlowSensors sensors_flow_1;
 FlowSensors sensors_flow_2;
-
-JsonObject sensorsData = rawData.to<JsonObject>();
-JsonArray flowSensorsArray = sensorsData.createNestedArray("flowSensors");
-JsonArray rainSensorsArray = sensorsData.createNestedArray("rainSensors");
-JsonObject flowSensorData_1 = flowSensorsArray.createNestedObject();
-JsonObject flowSensorData_2 = flowSensorsArray.createNestedObject();
-JsonObject rainSensorsData_1 = rainSensorsArray.createNestedObject();
+RainSensor  sensors_rain_1;
 
 String rawPayload{};
 
-// Put interrupt routine to ram
 void ICACHE_RAM_ATTR pulseCounter1() { sensors_flow_1.pulse++; };
 void ICACHE_RAM_ATTR pulseCounter2() { sensors_flow_2.pulse++; };
 
@@ -100,35 +88,48 @@ void connect_mqtt()
     }
 }
 
-FlowSensors flowUpdate (FlowSensors flow) {
+void readFlowSens(FlowSensors *f, JsonObject &j)
+{
 
-    flow.flowRate = ((1000.0 / (millis() - flow.prevTime)) * flow.pulse)/ flow.calibrationFactor;
-    flow.prevTime = millis();
-    flow.mililiters = (flow.flowRate / 60) * 1000;
-    flow.totalMilliLitres += flow.mililiters;
-    
-    return flow;
+    f->fRate = ((1000.0 / (millis() - f->preTime)) * f->pulse) / f->calFactor;
+    f->preTime = millis();
+    f->mLiters = (f->fRate/60) * 1000;
+    f->mLitersTotal += f->mLiters;
+    j["flow"] = f->mLiters;
+    j["flowTotal"] = f->mLitersTotal;
+    f->pulse = 0;
+
 }
 
+void readRainSens(RainSensor *r, JsonObject &j) {
+
+    r->sensorReading = analogRead(rainPin_1);
+    r->sensorReadRange = map(r->sensorReading, 0, 1024, 0, 10);
+    j["waterResistance"] = r->sensorReadRange;
+
+}
 
 void setup()
 {
-    Serial.begin(115200);
-    sensorsData["deviceID"] = deviceID;
-    sensorsData["deviceType"] = deviceType;
 
-    pinMode(sensor_pin_flow_1, INPUT);
-    pinMode(sensor_pin_flow_2, INPUT);
-    pinMode(sensor_pin_rain_1, INPUT);
+    Serial.begin(BAUDRATE);
 
-    digitalWrite(sensor_pin_flow_1, HIGH);
-    digitalWrite(sensor_pin_flow_2, HIGH);
+    sensObj["deviceID"] = deviceID;
+    sensObj["deviceType"] = deviceType;
+
+    pinMode(flowPin_1, INPUT);
+    pinMode(flowPin_2, INPUT);
+    pinMode(rainPin_1, INPUT);
+
+    digitalWrite(flowPin_1, HIGH);
+    digitalWrite(flowPin_2, HIGH);
 
     connect_wifi();
     connect_mqtt();
 
-    attachInterrupt(digitalPinToInterrupt(sensor_pin_flow_1), pulseCounter1, RISING);
-    attachInterrupt(digitalPinToInterrupt(sensor_pin_flow_2), pulseCounter2, RISING);
+    attachInterrupt(digitalPinToInterrupt(flowPin_1), pulseCounter1, RISING);
+    attachInterrupt(digitalPinToInterrupt(flowPin_2), pulseCounter2, RISING);
+
 }
 
 void loop()
@@ -140,39 +141,26 @@ void loop()
 
     while (WiFi.status() == WL_CONNECTED && mqttClient.connected())
     {
-        if((millis() - sensors_flow_1.prevTime) > 1000){
-            
-            //FlowSensor 1
-            detachInterrupt(digitalPinToInterrupt(sensor_pin_flow_1));
-            sensors_flow_1 = flowUpdate(sensors_flow_1);
-            flowSensorData_1["flow"] = sensors_flow_1.mililiters;
-            flowSensorData_1["flowTotal"] = sensors_flow_1.totalMilliLitres;
-            sensors_flow_1.pulse = 0;
-            attachInterrupt(digitalPinToInterrupt(sensor_pin_flow_1));
-            
-            //FlowSensor 2
-            detachInterrupt(digitalPinToInterrupt(sensor_pin_flow_2));
-            sensors_flow_2 = flowUpdate(sensors_flow_2);
-            flowSensorData_2["flow"] = sensors_flow_2.mililiters;
-            flowSensorData_2["flowTotal"] = sensors_flow_2.totalMilliLitres;
-            sensors_flow_2.pulse = 0;
-            attachInterrupt(digitalPinToInterrupt(sensor_pin_flow_2));
 
-            sensorReading = analogRead(sensor_pin_rain_1);
-            sensorReadRange = map(sensorReading, 0, 1024, 0, 10);
-            rainSensorsData_1["waterResistance"] = sensorReadRange;
+        detachInterrupt(digitalPinToInterrupt(flowPin_1));
+        readFlowSens(&sensors_flow_1,fSensDat_1);
+        
+        detachInterrupt(digitalPinToInterrupt(flowPin_2));
+        readFlowSens(&sensors_flow_2,fSensDat_2);
 
-            serializeJson(rawData, rawPayload);
+        readRainSens(&sensors_rain_1,rSensDat_1);
 
-            mqttClient.publish(mqttTopic, rawPayload.c_str(), false);
+        serializeJson(rawData, rawPayload);
+        mqttClient.publish(mqttTopic, rawPayload.c_str(), false);
+        
 
-            Serial.println(rawPayload); rawPayload = "";
+        Serial.println(rawPayload);
+        rawPayload = "";
 
-            delay(2000);
-            
-        }
-
+        attachInterrupt(digitalPinToInterrupt(flowPin_1), pulseCounter1, RISING);
+        attachInterrupt(digitalPinToInterrupt(flowPin_2), pulseCounter2, RISING);
+        delay(2000);
 
     }
-    
+
 }
