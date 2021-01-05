@@ -11,7 +11,11 @@ uploadfs:
 	pio -f -c vim run --target uploadfs
 update:
 	pio -f -c vim update
-
+commit: 
+	git commit -am $msg
+push:	
+	git add *
+	git push --set-upstream origin dev-alpha
 #your own cmd
 #program:
 #	pio -f -c vim run --target program
