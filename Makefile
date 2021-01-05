@@ -1,4 +1,5 @@
 # Uncomment lines below if you have problems with $PATH
+#
 #SHELL := /bin/zsh
 #PATH := /usr/local/bin:$(PATH)
 all:
@@ -12,9 +13,8 @@ uploadfs:
 update:
 	pio -f -c vim update
 commit: 
-	@echo git commit -am $(filter-out $@,$(MAKECMDGOALS))
+	@echo git commit -am $(msg)
 push:	
-	git add *
 	git push --set-upstream origin dev-alpha
 
 #your own cmd
