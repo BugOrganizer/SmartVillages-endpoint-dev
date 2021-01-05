@@ -12,10 +12,11 @@ uploadfs:
 update:
 	pio -f -c vim update
 commit: 
-	git commit -am $@
+	@echo git commit -am $(filter-out $@,$(MAKECMDGOALS))
 push:	
 	git add *
 	git push --set-upstream origin dev-alpha
+
 #your own cmd
 #program:
 #	pio -f -c vim run --target program
