@@ -12,7 +12,7 @@ uploadfs:
 update:
 	pio -f -c vim update
 commit: 
-	git commit -am $msg
+	git commit -am $@
 push:	
 	git add *
 	git push --set-upstream origin dev-alpha
